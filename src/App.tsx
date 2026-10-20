@@ -8,13 +8,18 @@ import {
   Bell,
   BookOpen,
   Brain,
+  CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Command,
   Download,
   Flame,
+  FileUp,
+  FolderOpen,
   House,
   Lightbulb,
   Moon,
@@ -32,6 +37,11 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import {
+  importCalendarFile,
+  type StudyCalendarEvent,
+} from "./lib/calendarImport";
+import { importStudyFiles, importStudyText } from "./lib/studyImport";
 import "./App.css";
 
 type Tab = "today" | "focus" | "notes" | "cards" | "progress";
@@ -55,11 +65,21 @@ type Flashcard = {
   back: string;
   subject: string;
   mastered: boolean;
+  deckId: string;
+};
+type FlashcardDeck = {
+  id: string;
+  name: string;
+  course: string;
+  source: string;
 };
 type StudyState = {
   tasks: Task[];
   notes: Note[];
   cards: Flashcard[];
+  decks: FlashcardDeck[];
+  activeDeckId: string;
+  calendarEvents: StudyCalendarEvent[];
   focusMinutes: number;
   streak: number;
   weekMinutes: number[];
@@ -69,6 +89,23 @@ type StudyState = {
 
 const STORAGE_KEY = "studybuddy-state-v1";
 const dayIndex = (new Date().getDay() + 6) % 7;
+const courseOptions = [
+  "Biology I Honors",
+  "AP Environmental Science",
+  "World History & Geography II Honors",
+  "English 9 Honors",
+  "AP Computer Science Principles",
+  "Algebra II Honors",
+  "Spanish III",
+  "Wildcat Connection",
+  "General / Other",
+];
+const starterDeck: FlashcardDeck = {
+  id: "starter",
+  name: "Getting started",
+  course: "Biology I Honors",
+  source: "Sample cards",
+};
 const tabItems: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: "today", label: "Today", icon: House },
   { id: "focus", label: "Focus room", icon: Target },
@@ -82,28 +119,28 @@ const starterState: StudyState = {
     {
       id: "task-1",
       title: "Review cell structure notes",
-      subject: "Biology",
+      subject: "Biology I Honors",
       minutes: 25,
       done: false,
     },
     {
       id: "task-2",
-      title: "Practice derivatives: set 4",
-      subject: "Calculus",
+      title: "Practice systems of equations",
+      subject: "Algebra II Honors",
       minutes: 35,
       done: false,
     },
     {
       id: "task-3",
-      title: "Outline chapter 6 response",
-      subject: "Literature",
+      title: "Outline an English response",
+      subject: "English 9 Honors",
       minutes: 20,
       done: true,
     },
     {
       id: "task-4",
       title: "Revisit photosynthesis cards",
-      subject: "Biology",
+      subject: "Biology I Honors",
       minutes: 15,
       done: false,
     },
@@ -112,15 +149,15 @@ const starterState: StudyState = {
     {
       id: "note-1",
       title: "Cell membranes",
-      subject: "Biology",
+      subject: "Biology I Honors",
       body: "The phospholipid bilayer is selectively permeable. Small nonpolar molecules cross by diffusion; ions and larger molecules need transport proteins.\n\nOsmosis is the movement of water toward the higher solute concentration.",
       updatedAt: "Today",
     },
     {
       id: "note-2",
-      title: "Derivative rules",
-      subject: "Calculus",
-      body: "Power rule: bring the exponent down, then subtract one.\n\nProduct rule: first times derivative of second, plus second times derivative of first.",
+      title: "Solving systems",
+      subject: "Algebra II Honors",
+      body: "Substitution: solve one equation for a variable, then substitute it into the other equation.\n\nElimination: add or subtract equations to remove one variable.",
       updatedAt: "Yesterday",
     },
   ],
@@ -129,24 +166,30 @@ const starterState: StudyState = {
       id: "card-1",
       front: "What is the role of the mitochondrion?",
       back: "It produces most of the cell's ATP through cellular respiration.",
-      subject: "Biology",
+      subject: "Biology I Honors",
       mastered: false,
+      deckId: "starter",
     },
     {
       id: "card-2",
       front: "What is the derivative of xⁿ?",
       back: "n · xⁿ⁻¹ (the power rule)",
-      subject: "Calculus",
+      subject: "Biology I Honors",
       mastered: false,
+      deckId: "starter",
     },
     {
       id: "card-3",
       front: "What does selectively permeable mean?",
       back: "A membrane allows some substances to pass through while restricting others.",
-      subject: "Biology",
+      subject: "Biology I Honors",
       mastered: false,
+      deckId: "starter",
     },
   ],
+  decks: [starterDeck],
+  activeDeckId: starterDeck.id,
+  calendarEvents: [],
   focusMinutes: 0,
   streak: 0,
   weekMinutes: emptyWeek(),
@@ -167,6 +210,20 @@ function weekStartStamp(date = new Date()) {
   return dateStamp(monday);
 }
 
+function courseClassName(course: string) {
+  const colors: Record<string, string> = {
+    "Biology I Honors": "biology",
+    "AP Environmental Science": "environmental",
+    "World History & Geography II Honors": "history",
+    "English 9 Honors": "english",
+    "AP Computer Science Principles": "computer-science",
+    "Algebra II Honors": "algebra",
+    "Spanish III": "spanish",
+    "Wildcat Connection": "connection",
+  };
+  return colors[course] ?? "general";
+}
+
 function loadStudyState(): StudyState {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -184,7 +241,21 @@ function loadStudyState(): StudyState {
     return {
       tasks: Array.isArray(value.tasks) ? value.tasks : starterState.tasks,
       notes: Array.isArray(value.notes) ? value.notes : starterState.notes,
-      cards: Array.isArray(value.cards) ? value.cards : starterState.cards,
+      cards: Array.isArray(value.cards)
+        ? value.cards.map((card) => ({
+            ...card,
+            deckId:
+              typeof card.deckId === "string" ? card.deckId : starterDeck.id,
+          }))
+        : starterState.cards,
+      decks: Array.isArray(value.decks) ? value.decks : [starterDeck],
+      activeDeckId:
+        typeof value.activeDeckId === "string"
+          ? value.activeDeckId
+          : starterDeck.id,
+      calendarEvents: Array.isArray(value.calendarEvents)
+        ? value.calendarEvents
+        : [],
       focusMinutes:
         typeof value.focusMinutes === "number" ? value.focusMinutes : 0,
       streak: typeof value.streak === "number" ? value.streak : 0,
@@ -216,7 +287,7 @@ function App() {
     done: boolean;
   } | null>(null);
   const [taskInput, setTaskInput] = useState("");
-  const [taskSubject, setTaskSubject] = useState("Biology");
+  const [taskSubject, setTaskSubject] = useState(courseOptions[0]);
   const [editingTask, setEditingTask] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -227,15 +298,37 @@ function App() {
   const [cardRevealed, setCardRevealed] = useState(false);
   const [newCardFront, setNewCardFront] = useState("");
   const [newCardBack, setNewCardBack] = useState("");
+  const [importCourse, setImportCourse] = useState(courseOptions[0]);
+  const [pastedStudyText, setPastedStudyText] = useState("");
+  const [importStatus, setImportStatus] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [fileDragOver, setFileDragOver] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarImporting, setCalendarImporting] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  );
+  const [calendarSelectedDay, setCalendarSelectedDay] = useState(() =>
+    dateStamp(new Date()),
+  );
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const secondsLeftRef = useRef(25 * 60);
   const [focusDuration, setFocusDuration] = useState(25);
   const [timerRunning, setTimerRunning] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const studyFileRef = useRef<HTMLInputElement>(null);
+  const calendarFileRef = useRef<HTMLInputElement>(null);
+  const calendarDialogRef = useRef<HTMLDialogElement>(null);
   const paletteRef = useRef<HTMLInputElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const activeDeck =
+    study.decks.find((deck) => deck.id === study.activeDeckId) ??
+    study.decks[0];
+  const deckCards = study.cards.filter(
+    (card) => card.deckId === activeDeck?.id,
+  );
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -344,6 +437,15 @@ function App() {
   }, [paletteOpen]);
 
   useEffect(() => {
+    const dialog = calendarDialogRef.current;
+    if (!calendarOpen || !dialog) return;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+    };
+  }, [calendarOpen]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -362,11 +464,11 @@ function App() {
         (event.key === "ArrowRight" || event.key === "ArrowLeft")
       ) {
         setCardIndex((index) =>
-          study.cards.length
+          deckCards.length
             ? (index +
                 (event.key === "ArrowRight" ? 1 : -1) +
-                study.cards.length) %
-              study.cards.length
+                deckCards.length) %
+              deckCards.length
             : 0,
         );
         setCardRevealed(false);
@@ -374,7 +476,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, paletteOpen, study.cards.length]);
+  }, [activeTab, deckCards.length, paletteOpen]);
 
   const today = new Intl.DateTimeFormat("en", {
     weekday: "long",
@@ -389,7 +491,7 @@ function App() {
       .toLowerCase()
       .includes(noteQuery.toLowerCase()),
   );
-  const currentCard = study.cards[cardIndex];
+  const currentCard = deckCards[cardIndex];
   const completedPercent = study.tasks.length
     ? Math.round((completedTasks / study.tasks.length) * 100)
     : 0;
@@ -553,10 +655,156 @@ function App() {
     showToast("New note created.");
   }
 
+  async function addStudyFiles(files: File[]) {
+    if (!files.length) return;
+    setImporting(true);
+    setImportStatus(
+      `Reading ${files.length} file${files.length === 1 ? "" : "s"}…`,
+    );
+    try {
+      const imported = await importStudyFiles(files, importCourse);
+      const source = files.map((file) => file.name).join(", ");
+      const decks = imported.map((item) => {
+        const deckId = crypto.randomUUID();
+        return {
+          deck: {
+            id: deckId,
+            name: item.title,
+            course: importCourse,
+            source,
+          },
+          cards: item.cards.map((card) => ({
+            ...card,
+            id: crypto.randomUUID(),
+            subject: importCourse,
+            mastered: false,
+            deckId,
+          })),
+        };
+      });
+      setStudy((current) => ({
+        ...current,
+        decks: [...current.decks, ...decks.map((item) => item.deck)],
+        cards: [...current.cards, ...decks.flatMap((item) => item.cards)],
+        activeDeckId: decks[0]?.deck.id ?? current.activeDeckId,
+      }));
+      setCardIndex(0);
+      setCardRevealed(false);
+      setActiveTab("cards");
+      setImportStatus(
+        `Created ${decks.length} deck${decks.length === 1 ? "" : "s"} for ${importCourse}.`,
+      );
+      showToast(
+        `Created ${decks.length} study deck${decks.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "The files could not be read.";
+      setImportStatus(message);
+      showToast(message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function addPastedStudyText() {
+    if (!pastedStudyText.trim()) {
+      setImportStatus(
+        "Paste notes, a word list, or a lesson_data object first.",
+      );
+      return;
+    }
+    setImporting(true);
+    try {
+      const imported = await importStudyText(pastedStudyText, importCourse);
+      const decks = imported.map((item) => {
+        const deckId = crypto.randomUUID();
+        return {
+          deck: {
+            id: deckId,
+            name: item.title,
+            course: importCourse,
+            source: "Pasted study material",
+          },
+          cards: item.cards.map((card) => ({
+            ...card,
+            id: crypto.randomUUID(),
+            subject: importCourse,
+            mastered: false,
+            deckId,
+          })),
+        };
+      });
+      setStudy((current) => ({
+        ...current,
+        decks: [...current.decks, ...decks.map((item) => item.deck)],
+        cards: [...current.cards, ...decks.flatMap((item) => item.cards)],
+        activeDeckId: decks[0]?.deck.id ?? current.activeDeckId,
+      }));
+      setPastedStudyText("");
+      setCardIndex(0);
+      setCardRevealed(false);
+      setActiveTab("cards");
+      setImportStatus(
+        `Created ${decks.length} deck${decks.length === 1 ? "" : "s"}.`,
+      );
+      showToast(
+        `Created ${decks.length} study deck${decks.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The pasted content could not be read.";
+      setImportStatus(message);
+      showToast(message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function addSchoolCalendar(file: File | undefined) {
+    if (!file) return;
+    setCalendarImporting(true);
+    try {
+      const imported = await importCalendarFile(file);
+      setStudy((current) => {
+        const events = new Map(
+          current.calendarEvents.map((event) => [event.id, event]),
+        );
+        imported.forEach((event) => events.set(event.id, event));
+        return {
+          ...current,
+          calendarEvents: [...events.values()].sort((left, right) =>
+            left.startsAt.localeCompare(right.startsAt),
+          ),
+        };
+      });
+      showToast(
+        `Imported ${imported.length} calendar event${imported.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "The calendar could not be imported.",
+      );
+    } finally {
+      setCalendarImporting(false);
+      if (calendarFileRef.current) calendarFileRef.current.value = "";
+    }
+  }
+
+  function selectDeck(deckId: string) {
+    setStudy((current) => ({ ...current, activeDeckId: deckId }));
+    setCardIndex(0);
+    setCardRevealed(false);
+  }
+
   function moveCard(direction: number) {
     setCardIndex((index) =>
-      study.cards.length
-        ? (index + direction + study.cards.length) % study.cards.length
+      deckCards.length
+        ? (index + direction + deckCards.length) % deckCards.length
         : 0,
     );
     setCardRevealed(false);
@@ -572,11 +820,12 @@ function App() {
       id: crypto.randomUUID(),
       front,
       back,
-      subject: "My cards",
+      subject: activeDeck?.course ?? importCourse,
       mastered: false,
+      deckId: activeDeck?.id ?? starterDeck.id,
     };
     setStudy((current) => ({ ...current, cards: [...current.cards, card] }));
-    setCardIndex(study.cards.length);
+    setCardIndex(deckCards.length);
     setCardRevealed(false);
     setNewCardFront("");
     setNewCardBack("");
@@ -699,7 +948,7 @@ function App() {
                 )}
                 <span className="task-meta">
                   <span
-                    className={`subject-dot ${task.subject.toLowerCase()}`}
+                    className={`subject-dot ${courseClassName(task.subject)}`}
                   />
                   {task.subject}
                   <span className="meta-divider">·</span>
@@ -744,6 +993,12 @@ function App() {
   }
 
   function renderToday() {
+    const upcomingEvents = study.calendarEvents
+      .filter(
+        (event) =>
+          new Date(event.endsAt).getTime() >= new Date().setHours(0, 0, 0, 0),
+      )
+      .slice(0, 3);
     return (
       <>
         <section className="welcome-row">
@@ -829,11 +1084,9 @@ function App() {
                 value={taskSubject}
                 onChange={(event) => setTaskSubject(event.target.value)}
               >
-                <option>Biology</option>
-                <option>Calculus</option>
-                <option>Literature</option>
-                <option>History</option>
-                <option>General</option>
+                {courseOptions.map((course) => (
+                  <option key={course}>{course}</option>
+                ))}
               </select>
               <button
                 type="submit"
@@ -903,9 +1156,250 @@ function App() {
                 ))}
               </div>
             </section>
+            <section className="panel upcoming-panel">
+              <div className="section-heading compact-heading">
+                <div>
+                  <span className="eyebrow">SCHOOL CALENDAR</span>
+                  <h2>Coming up</h2>
+                </div>
+                <button
+                  className="icon-button"
+                  title="Open calendar"
+                  aria-label="Open calendar"
+                  onClick={() => setCalendarOpen(true)}
+                >
+                  <CalendarDays size={17} />
+                </button>
+              </div>
+              {upcomingEvents.length ? (
+                <div className="upcoming-events">
+                  {upcomingEvents.map((event) => {
+                    const eventDate = new Date(event.startsAt);
+                    return (
+                      <button
+                        key={event.id}
+                        className="upcoming-event"
+                        onClick={() => {
+                          setCalendarSelectedDay(dateStamp(eventDate));
+                          setCalendarMonth(
+                            new Date(
+                              eventDate.getFullYear(),
+                              eventDate.getMonth(),
+                              1,
+                            ),
+                          );
+                          setCalendarOpen(true);
+                        }}
+                      >
+                        <span className="event-date-badge">
+                          <strong>{eventDate.getDate()}</strong>
+                          <small>
+                            {eventDate.toLocaleDateString("en", {
+                              month: "short",
+                            })}
+                          </small>
+                        </span>
+                        <span className="upcoming-event-copy">
+                          <strong>{event.title}</strong>
+                          <small>
+                            {event.allDay
+                              ? "All day"
+                              : eventDate.toLocaleTimeString("en", {
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                          </small>
+                        </span>
+                        <ArrowRight size={14} />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="calendar-empty-copy">
+                  Import your Schoology calendar to see due dates and events
+                  here.
+                </p>
+              )}
+              <div className="calendar-actions">
+                <button
+                  className="text-link"
+                  onClick={() => setCalendarOpen(true)}
+                >
+                  Open calendar <ArrowRight size={14} />
+                </button>
+                <button
+                  className="calendar-import-link"
+                  onClick={() => calendarFileRef.current?.click()}
+                  disabled={calendarImporting}
+                >
+                  <FileUp size={14} />{" "}
+                  {calendarImporting ? "Importing…" : "Import .ics"}
+                </button>
+              </div>
+              <input
+                ref={calendarFileRef}
+                className="sr-only"
+                type="file"
+                accept=".ics,text/calendar"
+                aria-label="Choose a Schoology iCalendar file"
+                onChange={(event) =>
+                  void addSchoolCalendar(event.currentTarget.files?.[0])
+                }
+              />
+            </section>
           </aside>
         </div>
       </>
+    );
+  }
+
+  function renderCalendarDialog() {
+    const firstOfMonth = new Date(
+      calendarMonth.getFullYear(),
+      calendarMonth.getMonth(),
+      1,
+    );
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(1 - ((firstOfMonth.getDay() + 6) % 7));
+    const days = Array.from({ length: 42 }, (_, index) => {
+      const day = new Date(gridStart);
+      day.setDate(gridStart.getDate() + index);
+      return day;
+    });
+    const selectedDate = new Date(`${calendarSelectedDay}T00:00:00`);
+    const selectedEvents = study.calendarEvents.filter(
+      (event) => dateStamp(new Date(event.startsAt)) === calendarSelectedDay,
+    );
+
+    return (
+      <dialog
+        ref={calendarDialogRef}
+        className="calendar-dialog"
+        aria-labelledby="calendar-title"
+        onClose={() => setCalendarOpen(false)}
+      >
+        <div className="calendar-dialog-header">
+          <div>
+            <span className="eyebrow">SCHOOL CALENDAR</span>
+            <h2 id="calendar-title">
+              {calendarMonth.toLocaleDateString("en", {
+                month: "long",
+                year: "numeric",
+              })}
+            </h2>
+          </div>
+          <div className="calendar-header-actions">
+            <button
+              className="icon-button"
+              aria-label="Previous month"
+              onClick={() =>
+                setCalendarMonth(
+                  (month) =>
+                    new Date(month.getFullYear(), month.getMonth() - 1, 1),
+                )
+              }
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Next month"
+              onClick={() =>
+                setCalendarMonth(
+                  (month) =>
+                    new Date(month.getFullYear(), month.getMonth() + 1, 1),
+                )
+              }
+            >
+              <ChevronRight size={18} />
+            </button>
+            <button
+              className="icon-button calendar-close"
+              aria-label="Close calendar"
+              onClick={() => calendarDialogRef.current?.close()}
+            >
+              <X size={17} />
+            </button>
+          </div>
+        </div>
+        <div className="calendar-dialog-body">
+          <section className="month-view" aria-label="Calendar month">
+            <div className="calendar-weekdays" aria-hidden="true">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+                <span key={day}>{day}</span>
+              ))}
+            </div>
+            <div className="calendar-days">
+              {days.map((day) => {
+                const key = dateStamp(day);
+                const count = study.calendarEvents.filter(
+                  (event) => dateStamp(new Date(event.startsAt)) === key,
+                ).length;
+                return (
+                  <button
+                    key={key}
+                    className={`calendar-day ${day.getMonth() === calendarMonth.getMonth() ? "" : "outside-month"} ${key === calendarSelectedDay ? "selected" : ""} ${key === dateStamp(new Date()) ? "today" : ""}`}
+                    aria-label={`${day.toLocaleDateString("en", { weekday: "long", month: "long", day: "numeric" })}${count ? `, ${count} events` : ""}`}
+                    aria-pressed={key === calendarSelectedDay}
+                    onClick={() => setCalendarSelectedDay(key)}
+                  >
+                    <span>{day.getDate()}</span>
+                    {count > 0 && <i aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="calendar-source-note">
+              Schoology calendar events imported from an .ics file stay on this
+              device.
+            </p>
+          </section>
+          <aside className="calendar-day-details">
+            <span className="eyebrow">
+              {selectedDate.toLocaleDateString("en", { weekday: "long" })}
+            </span>
+            <h3>
+              {selectedDate.toLocaleDateString("en", {
+                month: "long",
+                day: "numeric",
+              })}
+            </h3>
+            {selectedEvents.length ? (
+              <div className="calendar-detail-list">
+                {selectedEvents.map((event) => (
+                  <article className="calendar-detail-event" key={event.id}>
+                    <span className="event-time">
+                      {event.allDay
+                        ? "All day"
+                        : new Date(event.startsAt).toLocaleTimeString("en", {
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                    </span>
+                    <strong>{event.title}</strong>
+                    {event.description && <p>{event.description}</p>}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="calendar-no-events">Nothing scheduled here yet.</p>
+            )}
+            <button
+              className="primary-button calendar-import-button"
+              onClick={() => calendarFileRef.current?.click()}
+              disabled={calendarImporting}
+            >
+              <FileUp size={16} />{" "}
+              {calendarImporting ? "Importing…" : "Import Schoology .ics"}
+            </button>
+            <p className="calendar-private-note">
+              No Schoology password needed. Import a calendar file or feed you
+              have permission to use.
+            </p>
+          </aside>
+        </div>
+      </dialog>
     );
   }
 
@@ -1134,10 +1628,139 @@ function App() {
             <p>A little retrieval practice goes a long way.</p>
           </div>
           <span className="card-counter">
-            {study.cards.length
-              ? `${cardIndex + 1} / ${study.cards.length}`
+            {deckCards.length
+              ? `${cardIndex + 1} / ${deckCards.length}`
               : "0 cards"}
           </span>
+        </div>
+        <details className="panel material-import-panel">
+          <summary>
+            <span className="import-summary-icon">
+              <FolderOpen size={17} />
+            </span>
+            <span>
+              <strong>Bring in your study material</strong>
+              <small>
+                Turn class files or lesson lists into flashcard decks
+              </small>
+            </span>
+            <span className="import-summary-action">
+              <FileUp size={15} /> Import
+            </span>
+          </summary>
+          <div className="material-import-content">
+            <label className="import-course-select" htmlFor="import-course">
+              Put this material in
+            </label>
+            <select
+              id="import-course"
+              value={importCourse}
+              onChange={(event) => setImportCourse(event.target.value)}
+            >
+              {courseOptions.map((course) => (
+                <option key={course}>{course}</option>
+              ))}
+            </select>
+            <div className="material-import-grid">
+              <div
+                className={`file-drop-zone ${fileDragOver ? "drag-over" : ""}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setFileDragOver(true);
+                }}
+                onDragLeave={() => setFileDragOver(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setFileDragOver(false);
+                  void addStudyFiles(Array.from(event.dataTransfer.files));
+                }}
+              >
+                <span className="drop-icon">
+                  <FileUp size={19} />
+                </span>
+                <strong>Drop files here</strong>
+                <small>or choose files from your device</small>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => studyFileRef.current?.click()}
+                  disabled={importing}
+                >
+                  {importing ? "Reading files…" : "Choose files"}
+                </button>
+                <input
+                  ref={studyFileRef}
+                  className="sr-only"
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.pptx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.markdown,.html,.htm,.json,.js,.mjs"
+                  aria-label="Choose study files to import"
+                  onChange={(event) => {
+                    void addStudyFiles(
+                      Array.from(event.currentTarget.files ?? []),
+                    );
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </div>
+              <div className="paste-study-content">
+                <label htmlFor="paste-study-text">
+                  Or paste notes / lesson_data
+                </label>
+                <textarea
+                  id="paste-study-text"
+                  value={pastedStudyText}
+                  onChange={(event) => setPastedStudyText(event.target.value)}
+                  placeholder="Paste a word list, class notes, JSON, or the lesson_data assignment you shared..."
+                  rows={5}
+                />
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={importing || !pastedStudyText.trim()}
+                  onClick={() => void addPastedStudyText()}
+                >
+                  <Sparkles size={15} /> Make class decks
+                </button>
+              </div>
+            </div>
+            <p className="import-supported-types">
+              PDF, DOCX, PPTX, XLSX, CSV/TSV, TXT, Markdown, HTML, JSON, and
+              JavaScript lesson data. Cards are generated from text, headings,
+              or term/definition pairs; review them after importing.
+            </p>
+            {importStatus && (
+              <p className="import-status" role="status" aria-live="polite">
+                {importStatus}
+              </p>
+            )}
+          </div>
+        </details>
+        <div
+          className="deck-picker"
+          role="tablist"
+          aria-label="Flashcard decks"
+        >
+          {study.decks.map((deck) => {
+            const count = study.cards.filter(
+              (card) => card.deckId === deck.id,
+            ).length;
+            return (
+              <button
+                key={deck.id}
+                role="tab"
+                aria-selected={deck.id === activeDeck?.id}
+                className={`deck-tab ${deck.id === activeDeck?.id ? "selected" : ""}`}
+                onClick={() => selectDeck(deck.id)}
+              >
+                <span className="deck-course">{deck.course}</span>
+                <strong>{deck.name}</strong>
+                <small>
+                  {count} {count === 1 ? "card" : "cards"}
+                </small>
+              </button>
+            );
+          })}
         </div>
         <div className="cards-layout">
           <div className="review-column">
@@ -1368,7 +1991,7 @@ function App() {
             </button>
           </div>
           <div className="subject-progress-list">
-            {["Biology", "Calculus", "Literature"].map((subject) => {
+            {courseOptions.slice(0, -1).map((subject) => {
               const total = study.tasks.filter(
                 (task) => task.subject === subject,
               ).length;
@@ -1378,7 +2001,7 @@ function App() {
               const progress = total ? Math.round((done / total) * 100) : 0;
               return (
                 <div className="subject-progress" key={subject}>
-                  <span className={`subject-dot ${subject.toLowerCase()}`} />
+                  <span className={`subject-dot ${courseClassName(subject)}`} />
                   <strong>{subject}</strong>
                   <div className="subject-track">
                     <span style={{ width: `${progress}%` }} />
@@ -1560,6 +2183,7 @@ function App() {
           </button>
         </footer>
       </main>
+      {renderCalendarDialog()}
       {toast && (
         <div className="toast" role="status" aria-live="polite">
           <CheckCircle2 size={17} />
