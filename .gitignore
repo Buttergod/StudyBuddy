@@ -338,6 +338,12 @@ _Pvt_Extensions
 
 # Paket dependency manager
 **/.paket/paket.exe
+
+# Node and Vite
+dist/
+*.local
+.env.*
+!.env.example
 paket-files/
 
 # FAKE - F# Make
