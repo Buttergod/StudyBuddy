@@ -34,7 +34,7 @@ The course picker is set up for Biology I Honors, AP Environmental Science, Worl
 
 The study importer accepts PDF, DOCX, PPTX, XLSX/XLSM, CSV/TSV, TXT, Markdown, HTML, JSON, and JavaScript lesson data. It creates one deck per file, and one deck per lesson for `lesson_data` objects. CSV and text imports work best with term/definition pairs; imported decks can be reviewed and edited before studying. Images, scans without selectable text, audio, and video need OCR or transcription support and are not parsed yet.
 
-To bring in Schoology dates, export/download a calendar `.ics` file from Schoology and choose **Import .ics** in Today. This is a local file import, not a direct Schoology sign-in. Do not paste your Schoology password into StudyBuddy; a direct account connection would require a school-approved integration and credentials.
+To bring in Schoology dates, paste a Schoology `webcal://` feed link into the calendar dialog or export/download its `.ics` file and choose **Import downloaded .ics file**. The feed link is used for that request only and is not saved; imported events are stored in this browser. Schoology may block direct browser requests with CORS, in which case use the downloaded `.ics` file. StudyBuddy never needs your Schoology password.
 
 Use `Ctrl+K` (or `⌘K` on macOS) to open quick navigation and actions. The theme toggle, browser notification permission, keyboard focus states, and reduced-motion preference are supported. App data is stored locally in browser storage; exporting a backup is available from Progress.
 

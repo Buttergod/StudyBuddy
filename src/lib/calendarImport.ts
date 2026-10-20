@@ -129,3 +129,76 @@ export async function importCalendarFile(file: File) {
     throw new Error("No calendar events were found in that file.");
   return events;
 }
+
+export function normalizeCalendarFeedUrl(value: string) {
+  const normalized = value.trim().replace(/^webcal:\/\//i, "https://");
+  let url: URL;
+  try {
+    url = new URL(normalized);
+  } catch {
+    throw new Error("Enter a valid Schoology calendar link.");
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("Calendar feeds must use a secure HTTPS connection.");
+  }
+  if (
+    url.hostname !== "schoology.com" &&
+    !url.hostname.endsWith(".schoology.com")
+  ) {
+    throw new Error("Use a Schoology calendar feed link.");
+  }
+  if (url.username || url.password || (url.port && url.port !== "443")) {
+    throw new Error(
+      "Use the original Schoology calendar link without added credentials or ports.",
+    );
+  }
+  if (!url.pathname.toLowerCase().endsWith(".ics")) {
+    throw new Error("The Schoology link must point to an .ics calendar feed.");
+  }
+  return url.toString();
+}
+
+export async function importCalendarUrl(value: string) {
+  const url = normalizeCalendarFeedUrl(value);
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      credentials: "omit",
+      headers: { Accept: "text/calendar, text/plain;q=0.9" },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Schoology returned HTTP ${response.status}.`);
+    }
+    const source = await response.text();
+    if (source.length > 2_000_000) {
+      throw new Error(
+        "This calendar feed is too large to import in the browser.",
+      );
+    }
+    const events = parseICalendar(source);
+    if (!events.length) {
+      throw new Error("No calendar events were found in that feed.");
+    }
+    return events;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(
+        "The calendar request timed out. Try importing a downloaded .ics file.",
+        { cause: error },
+      );
+    }
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Schoology blocked the browser request (CORS). Download its .ics file and import that instead.",
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}

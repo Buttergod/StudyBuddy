@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import {
   importCalendarFile,
+  importCalendarUrl,
   type StudyCalendarEvent,
 } from "./lib/calendarImport";
 import { importStudyFiles, importStudyText } from "./lib/studyImport";
@@ -305,6 +306,7 @@ function App() {
   const [fileDragOver, setFileDragOver] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarImporting, setCalendarImporting] = useState(false);
+  const [calendarFeedUrl, setCalendarFeedUrl] = useState("");
   const [calendarMonth, setCalendarMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
@@ -792,6 +794,43 @@ function App() {
     } finally {
       setCalendarImporting(false);
       if (calendarFileRef.current) calendarFileRef.current.value = "";
+    }
+  }
+
+  async function addSchoolCalendarFeed(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCalendarImporting(true);
+    try {
+      const imported = await importCalendarUrl(calendarFeedUrl);
+      setStudy((current) => {
+        const events = new Map(
+          current.calendarEvents.map((calendarEvent) => [
+            calendarEvent.id,
+            calendarEvent,
+          ]),
+        );
+        imported.forEach((calendarEvent) =>
+          events.set(calendarEvent.id, calendarEvent),
+        );
+        return {
+          ...current,
+          calendarEvents: [...events.values()].sort((left, right) =>
+            left.startsAt.localeCompare(right.startsAt),
+          ),
+        };
+      });
+      showToast(
+        `Imported ${imported.length} calendar event${imported.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "The Schoology calendar feed could not be imported.",
+      );
+    } finally {
+      setCalendarImporting(false);
+      setCalendarFeedUrl("");
     }
   }
 
@@ -1385,17 +1424,40 @@ function App() {
             ) : (
               <p className="calendar-no-events">Nothing scheduled here yet.</p>
             )}
+            <form
+              className="calendar-feed-form"
+              onSubmit={addSchoolCalendarFeed}
+            >
+              <label htmlFor="schoology-feed-url">
+                Schoology calendar link
+              </label>
+              <input
+                id="schoology-feed-url"
+                type="url"
+                value={calendarFeedUrl}
+                onChange={(event) => setCalendarFeedUrl(event.target.value)}
+                placeholder="webcal://…/ical.ics"
+                autoComplete="off"
+                required
+              />
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={calendarImporting || !calendarFeedUrl.trim()}
+              >
+                {calendarImporting ? "Importing…" : "Import calendar link"}
+              </button>
+            </form>
             <button
-              className="primary-button calendar-import-button"
+              className="secondary-button calendar-import-button"
               onClick={() => calendarFileRef.current?.click()}
               disabled={calendarImporting}
             >
-              <FileUp size={16} />{" "}
-              {calendarImporting ? "Importing…" : "Import Schoology .ics"}
+              <FileUp size={16} /> Import downloaded .ics file
             </button>
             <p className="calendar-private-note">
-              No Schoology password needed. Import a calendar file or feed you
-              have permission to use.
+              Your link stays in this form and isn’t saved. If Schoology blocks
+              browser access, download the .ics file instead.
             </p>
           </aside>
         </div>

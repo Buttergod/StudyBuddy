@@ -1,7 +1,65 @@
-import { describe, expect, it } from "vitest";
-import { parseICalendar } from "./calendarImport";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  importCalendarUrl,
+  normalizeCalendarFeedUrl,
+  parseICalendar,
+} from "./calendarImport";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Schoology calendar imports", () => {
+  it("converts a Schoology webcal link to secure HTTPS", () => {
+    expect(
+      normalizeCalendarFeedUrl(
+        "webcal://henrico.schoology.com/calendar/feed/ical/123/token/ical.ics",
+      ),
+    ).toBe(
+      "https://henrico.schoology.com/calendar/feed/ical/123/token/ical.ics",
+    );
+  });
+
+  it("rejects calendar URLs that are not Schoology HTTPS feeds", () => {
+    expect(() =>
+      normalizeCalendarFeedUrl("https://example.com/calendar.ics"),
+    ).toThrow("Use a Schoology calendar feed link.");
+  });
+
+  it("fetches feeds without cookies or redirects", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:quiz-1\nDTSTART;VALUE=DATE:20261022\nSUMMARY:Biology quiz\nEND:VEVENT\nEND:VCALENDAR",
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events = await importCalendarUrl(
+      "webcal://henrico.schoology.com/calendar/feed/ical/123/example/ical.ics",
+    );
+
+    expect(events).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://henrico.schoology.com/calendar/feed/ical/123/example/ical.ics",
+      expect.objectContaining({
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
+  });
+
+  it("explains when the browser blocks a feed request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("failed")));
+
+    await expect(
+      importCalendarUrl(
+        "https://henrico.schoology.com/calendar/feed/ical/123/example/ical.ics",
+      ),
+    ).rejects.toThrow("CORS");
+  });
+
   it("reads, unescapes, sorts, and deduplicates iCalendar events", () => {
     const source = `BEGIN:VCALENDAR
 VERSION:2.0
